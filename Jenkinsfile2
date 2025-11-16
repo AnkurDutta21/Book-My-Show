@@ -51,6 +51,31 @@ pipeline {
             }
         }
 
+        /* 👉 NEW STAGE: FREE PORT 3000 */
+        stage('Free Port 3000') {
+            steps {
+                sh '''
+                echo "Checking if port 3000 is in use..."
+
+                # Kill any process using port 3000
+                if lsof -i:3000; then
+                    echo "Port 3000 is in use - killing the process..."
+                    fuser -k 3000/tcp || true
+                else
+                    echo "Port 3000 is free."
+                fi
+
+                # Kill any Docker container exposing port 3000
+                CONTAINER_ID=$(docker ps -q --filter "publish=3000")
+                if [ ! -z "$CONTAINER_ID" ]; then
+                    echo "Stopping container using port 3000: $CONTAINER_ID"
+                    docker stop $CONTAINER_ID || true
+                    docker rm $CONTAINER_ID || true
+                fi
+                '''
+            }
+        }
+
         stage('Deploy to Container') {
             steps {
                 sh '''
