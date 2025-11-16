@@ -1,21 +1,17 @@
-(with K8S Stage)
-
 pipeline {
     agent any
 
     tools {
-        jdk 'jdk17'
         nodejs 'node23'
     }
 
     environment {
-        SCANNER_HOME = tool 'sonar-scanner'
-        DOCKER_IMAGE = 'kastrov/bms:latest'
-        EKS_CLUSTER_NAME = 'kastro-eks'
         AWS_REGION = 'us-east-1'
+        EKS_CLUSTER_NAME = 'YOUR_CLUSTER_NAME'
     }
 
     stages {
+
         stage('Clean Workspace') {
             steps {
                 cleanWs()
@@ -24,73 +20,44 @@ pipeline {
 
         stage('Checkout from Git') {
             steps {
-                git branch: 'main', url: 'https://github.com/KastroVKiran/Book-My-Show.git'
-                sh 'ls -la'  // Verify files after checkout
+                git branch: 'main', url: 'https://github.com/AnkurDutta21/Book-My-Show.git'
+                sh 'ls -la'
             }
         }
 
-        stage('SonarQube Analysis') {
+        stage("Install NPM Dependencies") {
             steps {
-                withSonarQubeEnv('sonar-server') {
-                    sh ''' 
-                    $SCANNER_HOME/bin/sonar-scanner \
-                        -Dsonar.projectName=BMS \
-                        -Dsonar.projectKey=BMS
-                    '''
-                }
+                sh """
+                    cd bookmyshow-app
+                    npm install
+                """
             }
         }
 
-        stage('Quality Gate') {
+        stage('Build docker image') {
             steps {
-                script {
-                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token'
-                }
-            }
-        }
-
-        stage('Install Dependencies') {
-            steps {
-                sh '''
-                cd bookmyshow-app
-                ls -la  # Verify package.json exists
-                if [ -f package.json ]; then
-                    rm -rf node_modules package-lock.json  # Remove old dependencies
-                    npm install  # Install fresh dependencies
-                else
-                    echo "Error: package.json not found in bookmyshow-app!"
-                    exit 1
-                fi
-                '''
-            }
-        }
-
-        stage('OWASP FS Scan') {
-            steps {
-                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
-                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
-            }
-        }
-
-        stage('Trivy FS Scan') {
-            steps {
-                sh 'trivy fs . > trivyfs.txt'
+                sh 'docker build --no-cache -t bms -f bookmyshow-app/Dockerfile bookmyshow-app'
             }
         }
 
         stage('Docker Build & Push') {
             steps {
-                script {
-                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
-                        sh ''' 
-                        echo "Building Docker image..."
-                        docker build --no-cache -t $DOCKER_IMAGE -f bookmyshow-app/Dockerfile bookmyshow-app
-
-                        echo "Pushing Docker image to Docker Hub..."
-                        docker push $DOCKER_IMAGE
-                        '''
-                    }
+                withCredentials([string(credentialsId: 'DOCKER_HUB_PASSWORD', variable: 'DOCKER_HUB_PASSWORD')]) {
+                    sh 'docker login -u ankurdutta2212 -p ${DOCKER_HUB_PASSWORD}'
                 }
+
+                sh 'docker tag bms ankurdutta2212/bms:latest'
+                sh 'docker push ankurdutta2212/bms:latest'
+            }
+        }
+
+        stage('Deploy to Container') {
+            steps {
+                sh '''
+                docker rm -f bms || true
+                docker run -d --name bms --restart=always -p 3000:80 ankurdutta2212/bms:latest
+                docker ps -a
+                '''
             }
         }
 
@@ -104,31 +71,16 @@ pipeline {
                     echo "Configuring kubectl for EKS cluster..."
                     aws eks update-kubeconfig --name $EKS_CLUSTER_NAME --region $AWS_REGION
 
-                    echo "Verifying kubeconfig..."
-                    kubectl config view
-
-                    echo "Deploying application to EKS..."
+                    echo "Deploying to EKS..."
                     kubectl apply -f deployment.yml
                     kubectl apply -f service.yml
 
-                    echo "Verifying deployment..."
+                    echo "Status..."
                     kubectl get pods
                     kubectl get svc
                     '''
                 }
             }
-        }
-    }
-
-    post {
-        always {
-            emailext attachLog: true,
-                subject: "'${currentBuild.result}'",
-                body: "Project: ${env.JOB_NAME}<br/>" +
-                      "Build Number: ${env.BUILD_NUMBER}<br/>" +
-                      "URL: ${env.BUILD_URL}<br/>",
-                to: 'kastrokiran@gmail.com',
-                attachmentsPattern: 'trivyfs.txt'
         }
     }
 }
