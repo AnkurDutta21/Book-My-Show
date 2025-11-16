@@ -46,13 +46,14 @@ pipeline {
             }
         }
 
-        stage('Deploy to Container') {
-            steps {
-                sh 'docker run -d --restart=always -P 3000:80 ankurdutta2212/bms'
+stage('Deploy to Container') {
+    steps {
+        sh 'docker run -d --restart=always -p 3000:80 ankurdutta2212/bms'
 
-                echo "Checking running containers..."
-                sh 'docker ps -a'
-            }
-        }
+        echo "Checking running containers..."
+        sh 'docker ps -a'
+    }
+}
+
     }
 }
